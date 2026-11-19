@@ -1,0 +1,43 @@
+# Environment files — NEVER COMMIT (real DB password, JWT secret, ERP token)
+.env
+.env.*
+*.env
+.env.example
+
+# Build output
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/bin/
+/api
+/backoffice-api
+
+# Go test output
+*.test
+*.out
+coverage.*
+
+# Runtime data
+/tmp/
+/uploads/
+*.log
+
+# Local SQLite files from tests or experiments
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+
+# Workspace file (a root go.work breaks erp-api-v2 builds)
+go.work
+go.work.sum
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
