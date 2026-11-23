@@ -5,6 +5,7 @@ import (
 	"time"
 
 	domainreward "crm-core/domain/reward"
+	usecaselinemsg "crm-core/usecase/linemsg"
 	usecasereward "crm-core/usecase/reward"
 )
 
@@ -30,32 +31,33 @@ type RewardCategoryRequest struct {
 
 // RewardResponse is a reward with its ERP stock (plan §5.2–5.3).
 type RewardResponse struct {
-	ID               uint       `json:"id"`
-	Name             string     `json:"name"`
-	Description      string     `json:"description"`
-	ImageURL         string     `json:"imageUrl"`
-	CategoryID       *uint      `json:"categoryId"`
-	Type             string     `json:"type"`
-	ERPSKUID         *uint      `json:"erpSkuId"`
-	SKUCode          string     `json:"skuCode"`
-	SKUName          string     `json:"skuName"`
-	ERPWarehouseID   uint       `json:"erpWarehouseId"`
-	QtyPerRedemption int        `json:"qtyPerRedemption"`
-	PointsCost       int64      `json:"pointsCost"`
-	StockLimit       *int       `json:"stockLimit"`
-	LimitPerMember   *int       `json:"limitPerMember"`
-	MinTierID        *uint      `json:"minTierId"`
-	AvailableFrom    *time.Time `json:"availableFrom"`
-	AvailableTo      *time.Time `json:"availableTo"`
-	Status           string     `json:"status"`
-	RedeemedCount    int        `json:"redeemedCount"`
-	SortOrder        int        `json:"sortOrder"`
-	ERPAvailableQty  *int       `json:"erpAvailableQty"`
-	StockSyncedAt    *time.Time `json:"stockSyncedAt"`
-	StockStale       bool       `json:"stockStale"`
-	RemainingQuota   int        `json:"remainingQuota"`
-	UpdatedByEmail   string     `json:"updatedByEmail"`
-	UpdatedAt        time.Time  `json:"updatedAt"`
+	ID               uint                   `json:"id"`
+	Name             string                 `json:"name"`
+	Description      string                 `json:"description"`
+	ImageURL         string                 `json:"imageUrl"`
+	CategoryID       *uint                  `json:"categoryId"`
+	Type             string                 `json:"type"`
+	ERPSKUID         *uint                  `json:"erpSkuId"`
+	SKUCode          string                 `json:"skuCode"`
+	SKUName          string                 `json:"skuName"`
+	ERPWarehouseID   uint                   `json:"erpWarehouseId"`
+	QtyPerRedemption int                    `json:"qtyPerRedemption"`
+	PointsCost       int64                  `json:"pointsCost"`
+	StockLimit       *int                   `json:"stockLimit"`
+	LimitPerMember   *int                   `json:"limitPerMember"`
+	MinTierID        *uint                  `json:"minTierId"`
+	AvailableFrom    *time.Time             `json:"availableFrom"`
+	AvailableTo      *time.Time             `json:"availableTo"`
+	Status           string                 `json:"status"`
+	RedeemedCount    int                    `json:"redeemedCount"`
+	SortOrder        int                    `json:"sortOrder"`
+	ERPAvailableQty  *int                   `json:"erpAvailableQty"`
+	StockSyncedAt    *time.Time             `json:"stockSyncedAt"`
+	StockStale       bool                   `json:"stockStale"`
+	RemainingQuota   int                    `json:"remainingQuota"`
+	LineVisibility   LineVisibilityResponse `json:"lineVisibility"`
+	UpdatedByEmail   string                 `json:"updatedByEmail"`
+	UpdatedAt        time.Time              `json:"updatedAt"`
 }
 
 // ToRewardResponse maps a reward view.
@@ -70,6 +72,7 @@ func ToRewardResponse(v usecasereward.View) RewardResponse {
 		RedeemedCount: r.RedeemedCount, SortOrder: r.SortOrder,
 		ERPAvailableQty: v.ERPAvailableQty, StockSyncedAt: v.StockSyncedAt, StockStale: v.StockStale,
 		RemainingQuota: v.RemainingQuota, UpdatedByEmail: r.UpdatedByEmail, UpdatedAt: r.UpdatedAt,
+		LineVisibility: ToLineVisibility(usecasereward.LineVisibility(v, clock())),
 	}
 }
 
@@ -150,6 +153,33 @@ type RedemptionResponse struct {
 	DeliveredAt   *time.Time `json:"deliveredAt"`
 	CancelledAt   *time.Time `json:"cancelledAt"`
 	UpdatedBy     string     `json:"updatedByEmail"`
+	// LineMessages are the LINE notifications the member got for this
+	// redemption (absent when the outbox was not looked up).
+	LineMessages *RedemptionLineMessagesResponse `json:"lineMessages,omitempty"`
+}
+
+// LineDeliveryResponse is one queued LINE message.
+type LineDeliveryResponse struct {
+	Status   string     `json:"status"` // pending | sent | dead
+	QueuedAt time.Time  `json:"queuedAt"`
+	SentAt   *time.Time `json:"sentAt,omitempty"`
+}
+
+// RedemptionLineMessagesResponse: null = never queued (no LINE linked).
+type RedemptionLineMessagesResponse struct {
+	Redeemed *LineDeliveryResponse `json:"redeemed"`
+	Shipped  *LineDeliveryResponse `json:"shipped"`
+}
+
+// ToRedemptionLineMessages maps the outbox lookup.
+func ToRedemptionLineMessages(m usecaselinemsg.RedemptionMessages) *RedemptionLineMessagesResponse {
+	conv := func(d *usecaselinemsg.Delivery) *LineDeliveryResponse {
+		if d == nil {
+			return nil
+		}
+		return &LineDeliveryResponse{Status: d.Status, QueuedAt: d.QueuedAt, SentAt: d.SentAt}
+	}
+	return &RedemptionLineMessagesResponse{Redeemed: conv(m.Redeemed), Shipped: conv(m.Shipped)}
 }
 
 // ToRedemptionResponse maps a row (member fields may be empty for a bare redemption).

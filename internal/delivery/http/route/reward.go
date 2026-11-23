@@ -18,6 +18,7 @@ import (
 //	GET    /api/v1/crm/rewards/:id                     rewards.view
 //	PATCH  /api/v1/crm/rewards/:id                     rewards.manage
 //	POST   /api/v1/crm/rewards/:id/status              rewards.manage {status}
+//	DELETE /api/v1/crm/rewards/:id                     rewards.manage (never redeemed only)
 //	GET    /api/v1/crm/erp/skus                        rewards.manage (ERP proxy)
 //	GET    /api/v1/crm/redemptions                     redemptions.fulfill (?format=xlsx)
 //	GET    /api/v1/crm/redemptions/:id                 redemptions.fulfill
@@ -41,6 +42,7 @@ func registerReward(crm fiber.Router, h Handlers) {
 	crm.Get("/rewards/:id", view, h.Reward.Get)
 	crm.Patch("/rewards/:id", manage, h.Reward.Update)
 	crm.Post("/rewards/:id/status", manage, h.Reward.SetStatus)
+	crm.Delete("/rewards/:id", manage, h.Reward.Delete)
 	crm.Get("/erp/skus", manage, h.Reward.SearchERPSKUs)
 
 	crm.Get("/redemptions", fulfill, h.Reward.Redemptions)

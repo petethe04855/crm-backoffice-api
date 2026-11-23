@@ -1,7 +1,7 @@
 // Package route wires HTTP routes. All endpoints live under /api/v1.
 //
 // Every module owns one route file with a registerXxx(crm, h) function and its
-// endpoint list in the file header (health.go, member.go, staff_role.go,
+// endpoint list in the file header (health.go, member.go, staff_role.go, consent.go, product_code.go, privacy.go,
 // sales_dashboard.go, upload.go, promotion.go, point_rules.go, coupon.go, reward.go, report.go). A new module adds:
 //
 //  1. one field to Handlers,
@@ -30,6 +30,9 @@ type Handlers struct {
 	Coupon         *handler.CouponHandler
 	Reward         *handler.RewardHandler
 	MemberReport   *handler.MemberReportHandler
+	Consent        *handler.ConsentHandler
+	ProductCode    *handler.ProductCodeHandler
+	Privacy        *handler.PrivacyHandler
 }
 
 // Register mounts all routes on app.
@@ -51,6 +54,9 @@ func Register(app *fiber.App, h Handlers, staffAuth fiber.Handler) {
 	registerCoupon(crm, h)
 	registerReward(crm, h)
 	registerReport(crm, h)
+	registerConsent(crm, h)
+	registerProductCode(crm, h)
+	registerPrivacy(crm, h)
 
 	registerFiles(api, h)
 }

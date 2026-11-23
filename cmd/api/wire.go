@@ -14,12 +14,18 @@ import (
 	"backoffice-api/internal/delivery/http/handler"
 	"backoffice-api/internal/storage"
 	"backoffice-api/internal/worker"
+	"backoffice-api/pkg/line"
 
 	"crm-core/repository/postgres"
+	usecaseconsent "crm-core/usecase/consent"
 	usecasecoupon "crm-core/usecase/coupon"
+	usecaseengagement "crm-core/usecase/engagement"
+	usecaselinemsg "crm-core/usecase/linemsg"
 	usecasemember "crm-core/usecase/member"
 	"crm-core/usecase/memberreport"
 	usecasepoints "crm-core/usecase/points"
+	usecaseprivacy "crm-core/usecase/privacy"
+	usecaseproductcode "crm-core/usecase/productcode"
 	usecasepromotion "crm-core/usecase/promotion"
 	usecasereward "crm-core/usecase/reward"
 	usecasestaffrole "crm-core/usecase/staffrole"
@@ -30,11 +36,11 @@ import (
 
 // wireMember builds the member and points handlers (they share the member
 // repository).
-func wireMember(db *gorm.DB) (*handler.MemberHandler, *handler.PointsHandler) {
+func wireMember(db *gorm.DB, notifier usecasemember.UnlinkNotifier) (*handler.MemberHandler, *handler.PointsHandler) {
 	memberRepo := postgres.NewMemberRepository(db)
 	tierRepo := postgres.NewTierRepository(db)
 	memberHandler := handler.NewMemberHandler(
-		usecasemember.New(memberRepo, tierRepo),
+		usecasemember.New(memberRepo, tierRepo, usecasemember.WithUnlinkNotifier(notifier)),
 		usecasemember.NewExporter(memberRepo, tierRepo),
 		usecasetier.New(tierRepo),
 	)
@@ -42,6 +48,87 @@ func wireMember(db *gorm.DB) (*handler.MemberHandler, *handler.PointsHandler) {
 		usecasepoints.New(postgres.NewPointsRepository(db), postgres.NewSettingsRepository(db)),
 	)
 	return memberHandler, pointsHandler
+}
+
+// wireLineMessaging builds the LINE notifier (queues messages) and, when a
+// channel access token is set, the worker job that sends the outbox.
+func wireLineMessaging(db *gorm.DB, token, memberMenuID, liffURL string) (*usecaselinemsg.Notifier, []worker.Job) {
+	outbox := postgres.NewLineOutboxRepository(db)
+	notifier := usecaselinemsg.NewNotifier(outbox, postgres.NewMemberRepository(db),
+		usecaseconsent.New(postgres.NewConsentRepository(db)), liffURL).WithPrefs(postgres.NewPrivacyRepository(db))
+	if token == "" {
+		log.Println("[WARN] LINE_CHANNEL_ACCESS_TOKEN is empty: LINE messages are queued but not sent")
+		return notifier, nil
+	}
+	sender := line.New(token, memberMenuID)
+	return notifier, []worker.Job{{
+		Name:  "line-outbox",
+		Every: 15 * time.Second,
+		Run: func(ctx context.Context) error {
+			res, err := usecaselinemsg.Dispatch(ctx, outbox, sender, time.Now(), 100)
+			if res.Sent+res.Failed+res.Dead > 0 {
+				log.Printf("[INFO] line-outbox sent=%d retry=%d dead=%d", res.Sent, res.Failed, res.Dead)
+			}
+			return err
+		},
+	}}
+}
+
+// wirePrivacy builds the PDPA deletion queue and the daily engagement jobs:
+// expiring-points reminders (10:00) and birthday bonus + greeting (08:00).
+func wirePrivacy(db *gorm.DB, notifier *usecaselinemsg.Notifier) (*handler.PrivacyHandler, []worker.Job) {
+	consents := usecaseconsent.New(postgres.NewConsentRepository(db))
+	uc := usecaseprivacy.New(postgres.NewPrivacyRepository(db), postgres.NewPrivacyUnitOfWork(db), usecaseprivacy.Sources{
+		Members: postgres.NewMemberRepository(db), Profiles: postgres.NewProfileRepository(db), Consents: consents,
+		Points: postgres.NewPointsRepository(db), Coupons: postgres.NewCouponRepository(db), Rewards: postgres.NewRewardRepository(db),
+		Codes: postgres.NewProductCodeAttemptRepository(db), MemberCards: postgres.NewMemberCardRepository(db),
+	}, usecaseprivacy.WithMenuReset(notifier))
+
+	points := usecasepoints.New(postgres.NewPointsRepository(db), postgres.NewSettingsRepository(db))
+	jobs := usecaseengagement.New(postgres.NewEngagementRepository(db), postgres.NewPointsRepository(db),
+		postgres.NewEarnRuleRepository(db), func(ctx context.Context) (int, error) {
+			p, err := points.ExpiryPolicy(ctx)
+			return p.Months, err
+		}, notifier)
+	return handler.NewPrivacyHandler(uc), []worker.Job{
+		{
+			Name: "points.expiring-reminder",
+			At:   &worker.DailyAt{Hour: 10, Minute: 0},
+			Run: func(ctx context.Context) error {
+				n, err := jobs.RemindExpiring(ctx, time.Now())
+				if n > 0 {
+					log.Printf("[INFO] points.expiring-reminder: %d member(s)", n)
+				}
+				return err
+			},
+		},
+		{
+			Name: "members.birthday",
+			At:   &worker.DailyAt{Hour: 8, Minute: 0},
+			Run: func(ctx context.Context) error {
+				n, err := jobs.Birthdays(ctx, time.Now())
+				if n > 0 {
+					log.Printf("[INFO] members.birthday: credited %d member(s)", n)
+				}
+				return err
+			},
+		},
+	}
+}
+
+// wireConsent builds the consent document handler (LINE OA PDPA documents).
+func wireConsent(db *gorm.DB) *handler.ConsentHandler {
+	return handler.NewConsentHandler(usecaseconsent.New(postgres.NewConsentRepository(db)))
+}
+
+// wireProductCode builds the packaging-code batch handler (L4B).
+func wireProductCode(db *gorm.DB, secret string) *handler.ProductCodeHandler {
+	members := usecaseproductcode.NewRedeemer(usecaseproductcode.RedeemerDeps{
+		Attempts: postgres.NewProductCodeAttemptRepository(db),
+		Settings: postgres.NewSettingsRepository(db),
+	})
+	return handler.NewProductCodeHandler(usecaseproductcode.New(
+		postgres.NewProductCodeRepository(db), postgres.NewProductCodeUnitOfWork(db), []byte(secret)), members)
 }
 
 // wireStaffRole builds the staff role handler and exposes the usecase, which
@@ -65,11 +152,12 @@ func wireUpload(db *gorm.DB, uploadDir string) (*handler.UploadHandler, error) {
 	return handler.NewUploadHandler(postgres.NewUploadRepository(db), store), nil
 }
 
-// wirePromotion builds the promotion handler. The CTA target checker stays nil
-// until the reward (T4) and coupon (T6) modules can provide one.
+// wirePromotion builds the promotion handler. CTAs that point at a coupon or a
+// reward are checked against those modules when a promotion is published.
 func wirePromotion(db *gorm.DB) *handler.PromotionHandler {
+	checker := usecasepromotion.NewTargetChecker(postgres.NewCouponRepository(db), postgres.NewRewardRepository(db))
 	return handler.NewPromotionHandler(
-		usecasepromotion.New(postgres.NewPromotionRepository(db), nil),
+		usecasepromotion.New(postgres.NewPromotionRepository(db), checker),
 	)
 }
 
@@ -129,7 +217,7 @@ func wireCoupon(db *gorm.DB) (*handler.CouponHandler, []worker.Job) {
 // wireReward builds the reward/redemption handler and the stock-sync job that
 // refreshes the ERP stock cache every 5 minutes (plan CRM_BACKOFFICE.md §5).
 // Without ERP_API_TOKEN the job is skipped and shipping answers ERP_UNAVAILABLE.
-func wireReward(db *gorm.DB, client *erp.Client) (*handler.RewardHandler, []worker.Job) {
+func wireReward(db *gorm.DB, client *erp.Client, notifier usecasereward.Notifier) (*handler.RewardHandler, []worker.Job) {
 	points := usecasepoints.New(
 		postgres.NewPointsRepository(db),
 		postgres.NewSettingsRepository(db),
@@ -142,6 +230,7 @@ func wireReward(db *gorm.DB, client *erp.Client) (*handler.RewardHandler, []work
 		postgres.NewTierRepository(db),
 		points,
 		erp.NewRewardERP(client),
+		usecasereward.WithNotifier(notifier),
 	)
 	sync := worker.Job{
 		Name:  "rewards.sync_stock",
@@ -157,7 +246,7 @@ func wireReward(db *gorm.DB, client *erp.Client) (*handler.RewardHandler, []work
 			return err
 		},
 	}
-	return handler.NewRewardHandler(uc, client), []worker.Job{sync}
+	return handler.NewRewardHandler(uc, client, handler.WithLineOutbox(postgres.NewLineOutboxRepository(db))), []worker.Job{sync}
 }
 
 // wireMemberReport builds the CRM member report (dashboard part B).

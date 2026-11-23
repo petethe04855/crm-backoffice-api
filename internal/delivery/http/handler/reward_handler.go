@@ -15,7 +15,9 @@ import (
 	"backoffice-api/pkg/response"
 
 	"crm-core/domain"
+	domainlinemsg "crm-core/domain/linemsg"
 	domainreward "crm-core/domain/reward"
+	usecaselinemsg "crm-core/usecase/linemsg"
 	usecasereward "crm-core/usecase/reward"
 
 	"github.com/gofiber/fiber/v2"
@@ -30,11 +32,44 @@ type SKUSearcher interface {
 type RewardHandler struct {
 	rewards usecasereward.Usecase
 	skus    SKUSearcher
+	outbox  domainlinemsg.OutboxRepository
+}
+
+// RewardHandlerOption configures a RewardHandler.
+type RewardHandlerOption func(*RewardHandler)
+
+// WithLineOutbox lets redemption responses show the member's LINE messages.
+func WithLineOutbox(outbox domainlinemsg.OutboxRepository) RewardHandlerOption {
+	return func(h *RewardHandler) { h.outbox = outbox }
 }
 
 // NewRewardHandler builds the handler. skus may be nil (no ERP search).
-func NewRewardHandler(rewards usecasereward.Usecase, skus SKUSearcher) *RewardHandler {
-	return &RewardHandler{rewards: rewards, skus: skus}
+func NewRewardHandler(rewards usecasereward.Usecase, skus SKUSearcher, opts ...RewardHandlerOption) *RewardHandler {
+	h := &RewardHandler{rewards: rewards, skus: skus}
+	for _, o := range opts {
+		o(h)
+	}
+	return h
+}
+
+// withLineMessages adds the LINE notification state to each redemption. A
+// lookup failure only drops the extra field: the queue still loads.
+func (h *RewardHandler) withLineMessages(ctx context.Context, out []dto.RedemptionResponse) {
+	if h.outbox == nil || len(out) == 0 {
+		return
+	}
+	nos := make([]string, 0, len(out))
+	for _, r := range out {
+		nos = append(nos, r.RedemptionNo)
+	}
+	msgs, err := usecaselinemsg.RedemptionDeliveries(ctx, h.outbox, nos)
+	if err != nil {
+		log.Printf("[WARN] redemption LINE messages: %v", err)
+		return
+	}
+	for i := range out {
+		out[i].LineMessages = dto.ToRedemptionLineMessages(msgs[out[i].RedemptionNo])
+	}
 }
 
 // ---- categories ----
@@ -209,7 +244,23 @@ func (h *RewardHandler) SetStatus(c *fiber.Ctx) error {
 	return response.OK(c, dto.ToRewardResponse(*v), "Reward status updated")
 }
 
+// Delete serves DELETE /rewards/:id (only a reward nobody redeemed).
+func (h *RewardHandler) Delete(c *fiber.Ctx) error {
+	id, err := parseID(c.Params("id"), "id")
+	if err != nil {
+		return writeError(c, err)
+	}
+	if err := h.rewards.Delete(c.UserContext(), id); err != nil {
+		return writeError(c, err)
+	}
+	if actor, ok := middleware.ActorFrom(c); ok {
+		log.Printf("[AUDIT] reward %d deleted by erp_user_id=%d", id, actor.ERPUserID)
+	}
+	return response.OK(c, nil, "Reward deleted")
+}
+
 // SearchERPSKUs serves GET /erp/skus?search=&page=&limit= (proxy to the ERP).
+// An empty search lists active SKUs, which the reward form's dropdown uses.
 func (h *RewardHandler) SearchERPSKUs(c *fiber.Ctx) error {
 	if h.skus == nil {
 		return response.Error(c, fiber.StatusServiceUnavailable, "ERP_UNAVAILABLE", "ERP integration is not configured")
@@ -219,7 +270,7 @@ func (h *RewardHandler) SearchERPSKUs(c *fiber.Ctx) error {
 	if page < 1 {
 		page = 1
 	}
-	if limit < 1 || limit > 50 {
+	if limit < 1 || limit > 100 {
 		limit = 20
 	}
 	skus, total, err := h.skus.SearchSKUs(c.UserContext(), c.Query("search"), 0, page, limit)
@@ -272,6 +323,7 @@ func (h *RewardHandler) redemptionList(c *fiber.Ctx, q domainreward.RedemptionQu
 	for _, r := range rows {
 		out = append(out, dto.ToRedemptionResponse(r))
 	}
+	h.withLineMessages(c.UserContext(), out)
 	page, limit := q.Page, q.Limit
 	if page < 1 {
 		page = 1
@@ -340,7 +392,9 @@ func (h *RewardHandler) GetRedemption(c *fiber.Ctx) error {
 	if err != nil {
 		return writeError(c, err)
 	}
-	return response.OK(c, dto.ToRedemptionResponse(domainreward.RedemptionRow{Redemption: *rd}))
+	out := []dto.RedemptionResponse{dto.ToRedemptionResponse(domainreward.RedemptionRow{Redemption: *rd})}
+	h.withLineMessages(c.UserContext(), out)
+	return response.OK(c, out[0])
 }
 
 // Transition serves POST /redemptions/:id/approve|pack|ship|deliver|cancel.
@@ -381,6 +435,8 @@ func (h *RewardHandler) Transition(action string) fiber.Handler {
 		if err != nil {
 			return writeError(c, err)
 		}
-		return response.OK(c, dto.ToRedemptionResponse(domainreward.RedemptionRow{Redemption: *rd}), "Redemption "+action+" done")
+		out := []dto.RedemptionResponse{dto.ToRedemptionResponse(domainreward.RedemptionRow{Redemption: *rd})}
+		h.withLineMessages(ctx, out)
+		return response.OK(c, out[0], "Redemption "+action+" done")
 	}
 }

@@ -69,7 +69,9 @@ func main() {
 
 	// Module wiring (see wire.go). main.go stays config → DB → migrate →
 	// routes → listen/shutdown.
-	memberHandler, pointsHandler := wireMember(db)
+	lineNotifier, lineJobs := wireLineMessaging(db, cfg.LineChannelAccessToken, cfg.LineMemberRichMenuID, cfg.LiffURL)
+	memberHandler, pointsHandler := wireMember(db, lineNotifier)
+	privacyHandler, privacyJobs := wirePrivacy(db, lineNotifier)
 	staffRoleHandler, staffRoleUC := wireStaffRole(db)
 	uploadHandler, err := wireUpload(db, cfg.UploadDir)
 	if err != nil {
@@ -101,9 +103,13 @@ func main() {
 		ExposeHeaders: "Content-Disposition",
 	}))
 
+	if len(cfg.ProductCodeHMACSecret) < 32 {
+		log.Println("[WARN] PRODUCT_CODE_HMAC_SECRET is missing or shorter than 32 characters: product code export is disabled until it is set (same value as line-oa-api)")
+	}
+
 	pointRulesHandler, pointRulesJobs := wirePointRules(db)
 	couponHandler, couponJobs := wireCoupon(db)
-	rewardHandler, rewardJobs := wireReward(db, erpClient)
+	rewardHandler, rewardJobs := wireReward(db, erpClient, lineNotifier)
 
 	route.Register(app, route.Handlers{
 		Health:         handler.NewHealthHandler(sqlDB),
@@ -117,6 +123,9 @@ func main() {
 		Coupon:         couponHandler,
 		Reward:         rewardHandler,
 		MemberReport:   wireMemberReport(db),
+		Consent:        wireConsent(db),
+		ProductCode:    wireProductCode(db, cfg.ProductCodeHMACSecret),
+		Privacy:        privacyHandler,
 	}, middleware.StaffAuth(authCfg))
 
 	// Background jobs. Modules append their jobs to workerJobs; an empty list
@@ -125,6 +134,8 @@ func main() {
 	workerJobs = append(workerJobs, pointRulesJobs...)
 	workerJobs = append(workerJobs, couponJobs...)
 	workerJobs = append(workerJobs, rewardJobs...)
+	workerJobs = append(workerJobs, lineJobs...)
+	workerJobs = append(workerJobs, privacyJobs...)
 	workers := worker.New(workerJobs, log.Default())
 	workerCtx, stopWorkers := context.WithCancel(context.Background())
 	defer stopWorkers()

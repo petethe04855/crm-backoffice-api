@@ -50,6 +50,18 @@ type Config struct {
 	WorkerEnabled bool
 	// UploadDir is where uploaded images are stored on disk.
 	UploadDir string
+	// ProductCodeHMACSecret hashes packaging codes; line-oa-api must use the
+	// same value. Empty disables code export.
+	ProductCodeHMACSecret string
+
+	// LINE Messaging (L6): the worker sends the outbox with this token.
+	// Empty = messages stay queued until it is set.
+	LineChannelAccessToken string
+	// LineMemberRichMenuID is the rich menu linked to members (cmd/richmenu
+	// prints it). Guests see the OA's default rich menu.
+	LineMemberRichMenuID string
+	// LiffURL is https://liff.line.me/<LIFF id> for links in messages.
+	LiffURL string
 }
 
 // IsProduction reports whether ENV is production.
@@ -88,8 +100,12 @@ func fromEnv() *Config {
 
 		CRMInternalToken: getEnv("CRM_INTERNAL_TOKEN", ""),
 
-		WorkerEnabled: getBool("WORKER_ENABLED", true),
-		UploadDir:     getEnv("UPLOAD_DIR", "./uploads"),
+		WorkerEnabled:          getBool("WORKER_ENABLED", true),
+		UploadDir:              getEnv("UPLOAD_DIR", "./uploads"),
+		ProductCodeHMACSecret:  getEnv("PRODUCT_CODE_HMAC_SECRET", ""),
+		LineChannelAccessToken: getEnv("LINE_CHANNEL_ACCESS_TOKEN", ""),
+		LineMemberRichMenuID:   getEnv("LINE_MEMBER_RICH_MENU_ID", ""),
+		LiffURL:                getEnv("LIFF_URL", ""),
 	}
 }
 

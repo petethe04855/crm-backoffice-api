@@ -22,10 +22,13 @@ import (
 	domainsales "crm-core/domain/sales"
 	"crm-core/migrations"
 	"crm-core/repository/postgres"
+	usecaseconsent "crm-core/usecase/consent"
 	usecasecoupon "crm-core/usecase/coupon"
 	usecasemember "crm-core/usecase/member"
 	"crm-core/usecase/memberreport"
 	usecasepoints "crm-core/usecase/points"
+	usecaseprivacy "crm-core/usecase/privacy"
+	usecaseproductcode "crm-core/usecase/productcode"
 	usecasepromotion "crm-core/usecase/promotion"
 	usecasereward "crm-core/usecase/reward"
 	usecasestaffrole "crm-core/usecase/staffrole"
@@ -147,8 +150,20 @@ func newEnv(t *testing.T) *testEnv {
 		Coupon: handler.NewCouponHandler(usecasecoupon.New(postgres.NewCouponRepository(db), postgres.NewCouponUnitOfWork(db), memberRepo, tierRepo,
 			usecasepoints.New(postgres.NewPointsRepository(db), postgres.NewSettingsRepository(db), usecasepoints.WithMembers(memberRepo)))),
 		MemberReport: handler.NewMemberReportHandler(memberreport.New(postgres.NewMemberReportRepository(db))),
+		Consent:      handler.NewConsentHandler(usecaseconsent.New(postgres.NewConsentRepository(db))),
+		Privacy: handler.NewPrivacyHandler(usecaseprivacy.New(postgres.NewPrivacyRepository(db), postgres.NewPrivacyUnitOfWork(db), usecaseprivacy.Sources{
+			Members: memberRepo, Profiles: postgres.NewProfileRepository(db), Consents: usecaseconsent.New(postgres.NewConsentRepository(db)),
+			Points: postgres.NewPointsRepository(db), Coupons: postgres.NewCouponRepository(db), Rewards: postgres.NewRewardRepository(db),
+			Codes: postgres.NewProductCodeAttemptRepository(db), MemberCards: postgres.NewMemberCardRepository(db),
+		})),
+		ProductCode: handler.NewProductCodeHandler(usecaseproductcode.New(postgres.NewProductCodeRepository(db),
+			postgres.NewProductCodeUnitOfWork(db), []byte("route-test-product-code-secret")),
+			usecaseproductcode.NewRedeemer(usecaseproductcode.RedeemerDeps{
+				Attempts: postgres.NewProductCodeAttemptRepository(db), Settings: postgres.NewSettingsRepository(db),
+			})),
 		Reward: handler.NewRewardHandler(usecasereward.New(postgres.NewRewardRepository(db), postgres.NewRewardUnitOfWork(db), memberRepo, tierRepo,
-			usecasepoints.New(postgres.NewPointsRepository(db), postgres.NewSettingsRepository(db), usecasepoints.WithMembers(memberRepo)), rewardERP), rewardERP),
+			usecasepoints.New(postgres.NewPointsRepository(db), postgres.NewSettingsRepository(db), usecasepoints.WithMembers(memberRepo)), rewardERP), rewardERP,
+			handler.WithLineOutbox(postgres.NewLineOutboxRepository(db))),
 	}, middleware.StaffAuth(middleware.StaffAuthConfig{ERPJWTSecret: testSecret, Sessions: sessions, Roles: staffUC}))
 
 	return &testEnv{app: app, db: db, sessions: sessions, sales: sales, erp: rewardERP, tierID: tier.ID}

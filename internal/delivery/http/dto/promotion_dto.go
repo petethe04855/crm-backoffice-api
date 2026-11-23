@@ -33,6 +33,7 @@ type PromotionResponse struct {
 	Priority       int                       `json:"priority"`
 	Status         string                    `json:"status"`
 	DisplayStatus  string                    `json:"displayStatus"`
+	LineVisibility LineVisibilityResponse    `json:"lineVisibility"`
 	Warnings       []string                  `json:"warnings"`
 	CreatedBy      uint                      `json:"createdBy"`
 	CreatedByEmail string                    `json:"createdByEmail"`
@@ -65,6 +66,7 @@ func ToPromotionResponse(p domainpromotion.Promotion, now time.Time, warnings []
 		Priority:       p.Priority,
 		Status:         p.Status,
 		DisplayStatus:  domainpromotion.DisplayStatus(p, now),
+		LineVisibility: ToLineVisibility(domainpromotion.LineVisibility(p, now)),
 		Warnings:       warnings,
 		CreatedBy:      p.CreatedBy,
 		CreatedByEmail: p.CreatedByEmail,

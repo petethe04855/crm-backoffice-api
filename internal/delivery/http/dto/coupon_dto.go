@@ -10,34 +10,35 @@ import (
 
 // CouponResponse is a coupon template (plan §8.1).
 type CouponResponse struct {
-	ID             uint       `json:"id"`
-	Name           string     `json:"name"`
-	Description    string     `json:"description"`
-	ImageURL       string     `json:"imageUrl"`
-	Terms          string     `json:"terms"`
-	BenefitType    string     `json:"benefitType"`
-	BenefitValue   float64    `json:"benefitValue"`
-	MaxDiscount    *float64   `json:"maxDiscount"`
-	MinSpend       float64    `json:"minSpend"`
-	PointsCost     int64      `json:"pointsCost"`
-	ClaimStartAt   *time.Time `json:"claimStartAt"`
-	ClaimEndAt     *time.Time `json:"claimEndAt"`
-	ExpiryMode     string     `json:"expiryMode"`
-	ExpiresAt      *time.Time `json:"expiresAt"`
-	ValidDays      int        `json:"validDays"`
-	TotalQuota     int        `json:"totalQuota"`
-	ClaimedCount   int        `json:"claimedCount"`
-	UsedCount      int        `json:"usedCount"`
-	RemainingQuota *int       `json:"remainingQuota"` // null = unlimited
-	LimitPerMember int        `json:"limitPerMember"`
-	MinTierID      *uint      `json:"minTierId"`
-	Channel        string     `json:"channel"`
-	CodeType       string     `json:"codeType"`
-	SharedCode     string     `json:"sharedCode"`
-	Status         string     `json:"status"`
-	UpdatedByEmail string     `json:"updatedByEmail"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	UpdatedAt      time.Time  `json:"updatedAt"`
+	ID             uint                   `json:"id"`
+	Name           string                 `json:"name"`
+	Description    string                 `json:"description"`
+	ImageURL       string                 `json:"imageUrl"`
+	Terms          string                 `json:"terms"`
+	BenefitType    string                 `json:"benefitType"`
+	BenefitValue   float64                `json:"benefitValue"`
+	MaxDiscount    *float64               `json:"maxDiscount"`
+	MinSpend       float64                `json:"minSpend"`
+	PointsCost     int64                  `json:"pointsCost"`
+	ClaimStartAt   *time.Time             `json:"claimStartAt"`
+	ClaimEndAt     *time.Time             `json:"claimEndAt"`
+	ExpiryMode     string                 `json:"expiryMode"`
+	ExpiresAt      *time.Time             `json:"expiresAt"`
+	ValidDays      int                    `json:"validDays"`
+	TotalQuota     int                    `json:"totalQuota"`
+	ClaimedCount   int                    `json:"claimedCount"`
+	UsedCount      int                    `json:"usedCount"`
+	RemainingQuota *int                   `json:"remainingQuota"` // null = unlimited
+	LimitPerMember int                    `json:"limitPerMember"`
+	MinTierID      *uint                  `json:"minTierId"`
+	Channel        string                 `json:"channel"`
+	CodeType       string                 `json:"codeType"`
+	SharedCode     string                 `json:"sharedCode"`
+	Status         string                 `json:"status"`
+	LineVisibility LineVisibilityResponse `json:"lineVisibility"`
+	UpdatedByEmail string                 `json:"updatedByEmail"`
+	CreatedAt      time.Time              `json:"createdAt"`
+	UpdatedAt      time.Time              `json:"updatedAt"`
 }
 
 // ToCouponResponse maps a template.
@@ -51,6 +52,7 @@ func ToCouponResponse(c domaincoupon.Coupon) CouponResponse {
 		LimitPerMember: c.LimitPerMember, MinTierID: c.MinTierID, Channel: c.Channel,
 		CodeType: c.CodeType, SharedCode: c.SharedCode, Status: c.Status,
 		UpdatedByEmail: c.UpdatedByEmail, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
+		LineVisibility: ToLineVisibility(usecasecoupon.LineVisibility(c, clock())),
 	}
 	if c.TotalQuota > 0 {
 		left := c.TotalQuota - c.ClaimedCount

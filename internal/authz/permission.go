@@ -45,6 +45,8 @@ const (
 	// SettingsView opens the CRM settings screens (point rules). Granting CRM
 	// roles stays owner-only under StaffRolesManage.
 	SettingsView = "settings.view"
+	// ConsentsManage publishes the PDPA consent documents shown in the LINE OA.
+	ConsentsManage = "consents.manage"
 )
 
 const (
@@ -86,6 +88,7 @@ var Matrix = map[string][]string{
 	CouponsView:      {owner, admin, sales, accountant},
 	CouponsManage:    {owner, admin},
 	SettingsView:     {owner, admin, accountant},
+	ConsentsManage:   {owner, admin},
 }
 
 // Allowed reports whether any of roles holds perm. Unknown permissions are denied.

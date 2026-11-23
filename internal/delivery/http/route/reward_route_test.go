@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"backoffice-api/internal/client/erp"
 
+	domainlinemsg "crm-core/domain/linemsg"
 	domainreward "crm-core/domain/reward"
 
 	"github.com/stretchr/testify/require"
@@ -56,6 +58,10 @@ func rewardBody() map[string]any {
 	return map[string]any{"name": "ขนมไก่ 1 ถุง", "erpSkuId": 101, "skuCode": "CHK-01", "skuName": "ขนมไก่", "pointsCost": 40}
 }
 
+// seededRedemptions numbers seeded redemptions; a clock-based number repeated
+// on Windows and made the test flaky.
+var seededRedemptions atomic.Int64
+
 // seedRedemption inserts a redemption directly (members redeem from the LINE
 // side). Points are 0 so cancelling needs no refund in this single-connection
 // test DB; refunds are covered by the crm-core usecase tests.
@@ -63,7 +69,7 @@ func (e *testEnv) seedRedemption(t *testing.T, rewardID, memberID uint, status s
 	t.Helper()
 	sku := uint(101)
 	rd := domainreward.Redemption{
-		RedemptionNo: fmt.Sprintf("RD2611-%06d", time.Now().UnixNano()%1_000_000), MemberID: memberID, RewardID: rewardID,
+		RedemptionNo: fmt.Sprintf("RD2611-%06d", seededRedemptions.Add(1)), MemberID: memberID, RewardID: rewardID,
 		Qty: 1, Status: status, RewardName: "ขนมไก่ 1 ถุง", SKUCode: "CHK-01", ERPSKUID: &sku, WarehouseID: 1,
 		ShipName: "สมชาย", ShipPhone: "0812345678", ShipAddress: "1 ถนนสุขุมวิท", ShipProvince: "กรุงเทพมหานคร",
 	}
@@ -241,4 +247,58 @@ func TestRedemptionsExportMasksUnlessOwner(t *testing.T) {
 	require.NotEqual(t, "0812345678", wh[10])
 	require.Equal(t, "***", wh[11])
 	require.Equal(t, "กรุงเทพมหานคร", wh[12], "province stays for reporting")
+}
+
+func TestRedemptionsShowLineMessages(t *testing.T) {
+	e := newEnv(t)
+	e.seedMembers(t)
+	wh := token(t, 3, "warehouse")
+	id := e.createReward(t, true)
+	rd := e.seedRedemption(t, id, e.memberIDs(t)[0], domainreward.RedemptionShipped)
+	key := "shipped:" + rd.RedemptionNo
+	sent := time.Now()
+	require.NoError(t, e.db.Create(&domainlinemsg.Outbox{
+		Kind: domainlinemsg.KindPush, Topic: domainlinemsg.TopicRedemptionShip, LineUserID: "U1", Payload: "[]",
+		DedupeKey: &key, Status: domainlinemsg.StatusSent, NextAttemptAt: sent, SentAt: &sent,
+	}).Error)
+
+	res := e.do(t, http.MethodGet, "/api/v1/crm/redemptions?status=shipped", wh, nil)
+	require.Equal(t, http.StatusOK, res.Status, string(res.Raw))
+	var rows []struct {
+		RedemptionNo string `json:"redemptionNo"`
+		LineMessages *struct {
+			Redeemed *struct{ Status string } `json:"redeemed"`
+			Shipped  *struct {
+				Status string     `json:"status"`
+				SentAt *time.Time `json:"sentAt"`
+			} `json:"shipped"`
+		} `json:"lineMessages"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body.Data, &rows))
+	require.Len(t, rows, 1)
+	require.NotNil(t, rows[0].LineMessages)
+	require.Nil(t, rows[0].LineMessages.Redeemed, "no confirmation was queued")
+	require.NotNil(t, rows[0].LineMessages.Shipped)
+	require.Equal(t, "sent", rows[0].LineMessages.Shipped.Status)
+	require.NotNil(t, rows[0].LineMessages.Shipped.SentAt)
+}
+
+func TestDeleteRewardOnlyWhenNeverRedeemed(t *testing.T) {
+	e := newEnv(t)
+	e.seedMembers(t)
+	admin := token(t, 1, "owner")
+	fresh := e.createReward(t, true)
+	used := e.createReward(t, true)
+	e.seedRedemption(t, used, e.memberIDs(t)[0], domainreward.RedemptionPending)
+
+	res := e.do(t, http.MethodDelete, fmt.Sprintf("/api/v1/crm/rewards/%d", used), admin, nil)
+	require.Equal(t, http.StatusConflict, res.Status, string(res.Raw))
+
+	res = e.do(t, http.MethodDelete, fmt.Sprintf("/api/v1/crm/rewards/%d", fresh), admin, nil)
+	require.Equal(t, http.StatusOK, res.Status, string(res.Raw))
+	require.Equal(t, http.StatusNotFound, e.do(t, http.MethodGet, fmt.Sprintf("/api/v1/crm/rewards/%d", fresh), admin, nil).Status)
+	require.Equal(t, http.StatusNotFound, e.do(t, http.MethodDelete, fmt.Sprintf("/api/v1/crm/rewards/%d", fresh), admin, nil).Status)
+
+	sales := token(t, 2, "sales")
+	require.Equal(t, http.StatusForbidden, e.do(t, http.MethodDelete, fmt.Sprintf("/api/v1/crm/rewards/%d", used), sales, nil).Status)
 }
