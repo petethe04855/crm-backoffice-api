@@ -29,7 +29,8 @@ func NewPromotionHandler(promotions usecasepromotion.Usecase) *PromotionHandler 
 // List serves GET /promotions.
 //
 //	?month=2026-11  display window overlapping that Thai month
-//	?status=        draft | published | archived (stored status)
+//	?status=        public | unpublic (the table's two states)
+//	                or draft | published | archived (stored status)
 //	?placement=     home_banner | promotion_list | popup
 //	?search=        title contains
 func (h *PromotionHandler) List(c *fiber.Ctx) error {
@@ -132,6 +133,20 @@ func (h *PromotionHandler) Publish(c *fiber.Ctx) error {
 		return writeError(c, err)
 	}
 	return response.OK(c, dto.ToPromotionResponse(*p, h.now(), warnings), "Promotion published")
+}
+
+// Unpublish serves POST /promotions/:id/unpublish: the promotion disappears
+// from the LINE app and becomes editable as "unpublic".
+func (h *PromotionHandler) Unpublish(c *fiber.Ctx) error {
+	actor, ok := middleware.ActorFrom(c)
+	if !ok {
+		return response.Unauthorized(c, "Unauthorized")
+	}
+	p, err := h.promotions.Unpublish(c.UserContext(), actor, c.Params("id"))
+	if err != nil {
+		return writeError(c, err)
+	}
+	return response.OK(c, dto.ToPromotionResponse(*p, h.now(), nil), "Promotion unpublished")
 }
 
 // Archive serves POST /promotions/:id/archive.

@@ -30,6 +30,12 @@ func TestMemberReportAPI(t *testing.T) {
 	require.EqualValues(t, 3, r.NewMembers)
 	require.Len(t, r.Months, 1)
 	require.Equal(t, "2026-11", r.Months[0].Month)
+	var withRewards struct {
+		Redemptions int64             `json:"redemptions"`
+		Rewards     []json.RawMessage `json:"rewards"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body.Data, &withRewards))
+	require.NotNil(t, withRewards.Rewards, "rewards is always an array")
 
 	res = e.do(t, http.MethodGet, "/api/v1/crm/reports/members", token(t, 3, "warehouse"), nil)
 	require.Equal(t, http.StatusForbidden, res.Status)
