@@ -175,6 +175,23 @@ func (h *PromotionHandler) Duplicate(c *fiber.Ctx) error {
 	return response.Created(c, dto.ToPromotionResponse(*p, h.now(), nil), "Promotion duplicated")
 }
 
+// SetPriority serves PATCH /promotions/:id/priority with {"priority": n}.
+func (h *PromotionHandler) SetPriority(c *fiber.Ctx) error {
+	actor, ok := middleware.ActorFrom(c)
+	if !ok {
+		return response.Unauthorized(c, "Unauthorized")
+	}
+	var req dto.PromotionPriorityRequest
+	if err := c.BodyParser(&req); err != nil || req.Priority == nil {
+		return response.BadRequest(c, "priority is required", "VALIDATION_ERROR")
+	}
+	p, err := h.promotions.SetPriority(c.UserContext(), actor, c.Params("id"), *req.Priority)
+	if err != nil {
+		return writeError(c, err)
+	}
+	return response.OK(c, dto.ToPromotionResponse(*p, h.now(), nil), "Promotion priority updated")
+}
+
 func toPromotionInput(req dto.PromotionRequest) usecasepromotion.Input {
 	in := usecasepromotion.Input{
 		Title:          req.Title,

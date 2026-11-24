@@ -19,6 +19,7 @@ type promotionPayload struct {
 	DisplayStartAt *string  `json:"displayStartAt"`
 	DisplayEndAt   *string  `json:"displayEndAt"`
 	Status         string   `json:"status"`
+	Priority       int      `json:"priority"`
 	DisplayStatus  string   `json:"displayStatus"`
 	Warnings       []string `json:"warnings"`
 	Audience       struct {
@@ -140,6 +141,16 @@ func TestPromotionLifecycle(t *testing.T) {
 	require.NotNil(t, published.Warnings)
 	require.Empty(t, published.Warnings)
 
+	// The list screen reorders a live promotion without resending the form.
+	res = e.do(t, http.MethodPatch, "/api/v1/crm/promotions/"+draft.ID+"/priority", owner, map[string]any{"priority": 7})
+	require.Equal(t, http.StatusOK, res.Status, string(res.Raw))
+	require.Equal(t, 7, decodePromotion(t, res).Priority)
+	require.Equal(t, "published", decodePromotion(t, res).Status)
+	res = e.do(t, http.MethodPatch, "/api/v1/crm/promotions/"+draft.ID+"/priority", owner, map[string]any{"priority": 10000})
+	require.Equal(t, http.StatusBadRequest, res.Status, string(res.Raw))
+	res = e.do(t, http.MethodPatch, "/api/v1/crm/promotions/"+draft.ID+"/priority", owner, map[string]any{})
+	require.Equal(t, http.StatusBadRequest, res.Status, string(res.Raw))
+
 	// Publishing twice and deleting a published promotion are conflicts.
 	res = e.do(t, http.MethodPost, "/api/v1/crm/promotions/"+draft.ID+"/publish", owner, nil)
 	require.Equal(t, http.StatusConflict, res.Status, string(res.Raw))
@@ -166,6 +177,8 @@ func TestPromotionLifecycle(t *testing.T) {
 
 	// Archived promotions can no longer be edited or published.
 	res = e.do(t, http.MethodPatch, "/api/v1/crm/promotions/"+draft.ID, owner, map[string]any{"title": "แก้ไม่ได้"})
+	require.Equal(t, http.StatusConflict, res.Status, string(res.Raw))
+	res = e.do(t, http.MethodPatch, "/api/v1/crm/promotions/"+draft.ID+"/priority", owner, map[string]any{"priority": 1})
 	require.Equal(t, http.StatusConflict, res.Status, string(res.Raw))
 	res = e.do(t, http.MethodPost, "/api/v1/crm/promotions/"+draft.ID+"/publish", owner, nil)
 	require.Equal(t, http.StatusConflict, res.Status, string(res.Raw))

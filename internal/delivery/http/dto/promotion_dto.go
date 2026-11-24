@@ -110,3 +110,8 @@ type PromotionRequest struct {
 	Audience       PromotionAudienceRequest `json:"audience"`
 	Priority       int                      `json:"priority"`
 }
+
+// PromotionPriorityRequest is the body of PATCH /promotions/:id/priority.
+type PromotionPriorityRequest struct {
+	Priority *int `json:"priority"`
+}
