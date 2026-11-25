@@ -59,9 +59,21 @@ func (h *MemberHandler) List(c *fiber.Ctx) error {
 	if err != nil {
 		return writeError(c, err)
 	}
+
+	actor, _ := middleware.ActorFrom(c)
+	unmasked := actor.IsOwner()
+
 	out := make([]dto.MemberListItem, 0, len(items))
 	for _, i := range items {
-		out = append(out, dto.ToMemberListItem(i))
+		item := dto.ToMemberListItem(i)
+		if !unmasked {
+			item.Email = domainmember.MaskEmail(item.Email)
+			if item.Phone != nil {
+				masked := domainmember.MaskPhone(*item.Phone)
+				item.Phone = &masked
+			}
+		}
+		out = append(out, item)
 	}
 	normalized, _ := usecasemember.NormalizeQuery(q)
 	return response.List(c, out, normalized.Page, normalized.Limit, total)
@@ -100,7 +112,17 @@ func (h *MemberHandler) Get(c *fiber.Ctx) error {
 	if err != nil {
 		return writeError(c, err)
 	}
-	return response.OK(c, dto.ToMemberDetail(d))
+	res := dto.ToMemberDetail(d)
+	actor, _ := middleware.ActorFrom(c)
+	if !actor.IsOwner() {
+		res.Email = domainmember.MaskEmail(res.Email)
+		if res.Phone != nil {
+			masked := domainmember.MaskPhone(*res.Phone)
+			res.Phone = &masked
+		}
+		res.BirthDate = nil
+	}
+	return response.OK(c, res)
 }
 
 // Tiers serves GET /tiers.
